@@ -136,6 +136,7 @@ const DEFAULT_US_CITY_ZIPS: Record<string, { city: string; state: string; zip: s
   tampa: { city: 'Tampa', state: 'FL', zip: '33602' },
   'los angeles': { city: 'Los Angeles', state: 'CA', zip: '90001' },
   'new york': { city: 'New York', state: 'NY', zip: '10001' },
+  'san juan': { city: 'San Juan', state: 'PR', zip: '00901' },
   chicago: { city: 'Chicago', state: 'IL', zip: '60601' },
   houston: { city: 'Houston', state: 'TX', zip: '77002' },
   dallas: { city: 'Dallas', state: 'TX', zip: '75201' },
@@ -382,8 +383,17 @@ function parseNaturalLanguage(input: string): ParsedRequest {
     destination = zipCodes[1] || '';
   }
 
-  if ((!origin || !destination) && !/\d/.test(input)) {
-    const simpleRoute = input.match(/^\s*([A-Za-z][\w\s,.-]+?)\s+to\s+([A-Za-z][\w\s,.-]+?)\s*$/i);
+  if (!origin || !destination) {
+    const stripped = input
+      .replace(boxPattern, ' ')
+      .replace(dimOnlyPattern, ' ')
+      .replace(weightPattern, ' ')
+      .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+      .replace(/\b(ship|shipping|box|boxes|pallet|pallets|crate|crates|package|packages|parcel|parcels|freight|weighing|weight|lb|lbs|pound|pounds|kg|kgs|inch|inches|in|cm)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const simpleRoute = stripped.match(/(?:from\s+)?(.+?)\s+to\s+(.+)/i);
     if (simpleRoute) {
       if (!origin) origin = simpleRoute[1].trim();
       if (!destination) destination = simpleRoute[2].trim();
@@ -440,6 +450,7 @@ function detectCountry(location: string): string {
   if (/india|mumbai|delhi|bangalore/i.test(loc)) return 'IN';
   if (/australia|sydney|melbourne|brisbane/i.test(loc)) return 'AU';
   if (/brazil|rio de janeiro|sao paulo/i.test(loc)) return 'BR';
+  if (/puerto rico|san juan/i.test(loc)) return 'US';
   
   return 'US';
 }
