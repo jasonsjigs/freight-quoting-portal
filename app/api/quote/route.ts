@@ -54,38 +54,60 @@ interface FreightosRate {
 // Country codes and detection
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
+const INCHES_PER_CM = 0.3937007874;
+const POUNDS_PER_KG = 2.2046226218;
+
+function normalizeLength(value: number, unit?: string): number {
+  if (!unit) return value;
+  const normalized = unit.toLowerCase();
+  if (normalized === 'cm') {
+    return value * INCHES_PER_CM;
+  }
+  return value;
+}
+
+function normalizeWeight(value: number, unit?: string): number {
+  if (!unit) return value;
+  const normalized = unit.toLowerCase();
+  if (normalized === 'kg' || normalized === 'kgs') {
+    return value * POUNDS_PER_KG;
+  }
+  return value;
+}
 
 function parseNaturalLanguage(input: string): ParsedRequest {
   const text = input.toLowerCase();
   const parcels: Parcel[] = [];
   
   // Parse multiple boxes with various formats
-  const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|cm|")?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
-  const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/gi;
+  const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
+  const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?/gi;
 
   let matches = [...input.matchAll(boxPattern)];
   
   if (matches.length > 0) {
     for (const match of matches) {
       parcels.push({
-        length: parseFloat(match[1]),
-        width: parseFloat(match[2]),
-        height: parseFloat(match[3]),
-        weight: parseFloat(match[4])
+        length: normalizeLength(parseFloat(match[1]), match[4]),
+        width: normalizeLength(parseFloat(match[2]), match[4]),
+        height: normalizeLength(parseFloat(match[3]), match[4]),
+        weight: normalizeWeight(parseFloat(match[5]), match[6])
       });
     }
   } else {
     const dimMatches = [...input.matchAll(dimOnlyPattern)];
-    const weightPattern = /(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
+    const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
     const weightMatches = [...input.matchAll(weightPattern)];
     
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
-      const weight = weightMatches[i] ? parseFloat(weightMatches[i][1]) : 10;
+      const weightUnit = weightMatches[i]?.[2];
+      const weight = weightMatches[i] ? normalizeWeight(parseFloat(weightMatches[i][1]), weightUnit) : 10;
+      const dimUnit = dim[4];
       parcels.push({
-        length: parseFloat(dim[1]),
-        width: parseFloat(dim[2]),
-        height: parseFloat(dim[3]),
+        length: normalizeLength(parseFloat(dim[1]), dimUnit),
+        width: normalizeLength(parseFloat(dim[2]), dimUnit),
+        height: normalizeLength(parseFloat(dim[3]), dimUnit),
         weight: weight
       });
     }
