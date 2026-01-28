@@ -74,7 +74,7 @@ export default function Home() {
         setShowContactForm(false);
         setPendingRequest('');
       }
-    } catch (error) {
+    } catch {
       setResult({ 
         success: false, 
         quotes: [], 
@@ -115,13 +115,7 @@ export default function Home() {
               id="shipping-request"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder='Example: "Ship a 24x10x10 box weighing 20lbs from 33142 to 90210"
-
-Or multi-box: "I need to ship the following boxes:
-1- 50x50x50 50lb
-2- 50x10x10 10lb
-3- 50x10x10 10lb
-from Miami to Los Angeles"'
+              placeholder={'Example: "Ship a 24x10x10 box weighing 20lbs from 33142 to 90210"\n\nOr multi-box: "I need to ship the following boxes:\n1- 50x50x50 50lb\n2- 50x10x10 10lb\n3- 50x10x10 10lb\nfrom Miami to Los Angeles"'}
               className="w-full h-40 px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               disabled={loading}
             />
@@ -215,7 +209,6 @@ from Miami to Los Angeles"'
                     </div>
                   )}
 
-                  {/* Shippo Results */}
                   {result.shippo && result.shippo.length > 0 && (
                     <div className="mb-6">
                       <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
@@ -243,7 +236,6 @@ from Miami to Los Angeles"'
                     </div>
                   )}
 
-                  {/* Freightos Results */}
                   {result.freightos && result.freightos.length > 0 && (
                     <div className="mb-6">
                       <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
@@ -274,7 +266,6 @@ from Miami to Los Angeles"'
                     </div>
                   )}
 
-                  {/* Generic quotes fallback */}
                   {(!result.shippo || result.shippo.length === 0) && 
                    (!result.freightos || result.freightos.length === 0) && 
                    result.quotes && result.quotes.length > 0 && (
