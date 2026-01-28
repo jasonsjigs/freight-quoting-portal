@@ -51,65 +51,402 @@ interface FreightosRate {
   service?: string;
 }
 
+interface FreightosEstimateMode {
+  mode?: string;
+  price?: {
+    min?: { moneyAmount?: { amount?: string | number; currency?: string } };
+    max?: { moneyAmount?: { amount?: string | number; currency?: string } };
+    moneyAmount?: { amount?: string | number; currency?: string };
+  };
+  transitTimes?: { min?: string | number; max?: string | number; unit?: string };
+}
+
+interface FreightosEstimateResponse {
+  response?: {
+    estimatedFreightRates?: {
+      numQuotes?: string | number;
+      mode?: FreightosEstimateMode | FreightosEstimateMode[];
+    };
+  };
+}
+
 // Country codes and detection
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
-const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
+const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'brasil', 'spain', 'espana', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan', 'colombia', 'argentina', 'peru', 'chile', 'venezuela'];
+const INCHES_PER_CM = 0.3937007874;
+const POUNDS_PER_KG = 2.2046226218;
+const DEFAULT_CONTACT_EMAIL = 'Jason@epmarine.com';
+const DEFAULT_CONTACT_PHONE = '786-603-7883';
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
+const LOCATION_CACHE = new Map<string, { city: string; state: string; zip: string }>();
+const US_STATE_ABBREVIATIONS: Record<string, string> = {
+  alabama: 'AL',
+  alaska: 'AK',
+  arizona: 'AZ',
+  arkansas: 'AR',
+  california: 'CA',
+  colorado: 'CO',
+  connecticut: 'CT',
+  delaware: 'DE',
+  florida: 'FL',
+  georgia: 'GA',
+  hawaii: 'HI',
+  idaho: 'ID',
+  illinois: 'IL',
+  indiana: 'IN',
+  iowa: 'IA',
+  kansas: 'KS',
+  kentucky: 'KY',
+  louisiana: 'LA',
+  maine: 'ME',
+  maryland: 'MD',
+  massachusetts: 'MA',
+  michigan: 'MI',
+  minnesota: 'MN',
+  mississippi: 'MS',
+  missouri: 'MO',
+  montana: 'MT',
+  nebraska: 'NE',
+  nevada: 'NV',
+  'new hampshire': 'NH',
+  'new jersey': 'NJ',
+  'new mexico': 'NM',
+  'new york': 'NY',
+  'north carolina': 'NC',
+  'north dakota': 'ND',
+  ohio: 'OH',
+  oklahoma: 'OK',
+  oregon: 'OR',
+  pennsylvania: 'PA',
+  'rhode island': 'RI',
+  'south carolina': 'SC',
+  'south dakota': 'SD',
+  tennessee: 'TN',
+  texas: 'TX',
+  utah: 'UT',
+  vermont: 'VT',
+  virginia: 'VA',
+  washington: 'WA',
+  'west virginia': 'WV',
+  wisconsin: 'WI',
+  wyoming: 'WY',
+  'puerto rico': 'PR'
+};
+
+function extractZip(location: string): string | null {
+  const match = location.match(/\b\d{5}(-\d{4})?\b/);
+  if (!match) return null;
+  return match[0].slice(0, 5);
+}
+
+function normalizeState(state?: string): string | undefined {
+  if (!state) return undefined;
+  const trimmed = state.trim();
+  if (trimmed.length === 2) return trimmed.toUpperCase();
+  return US_STATE_ABBREVIATIONS[trimmed.toLowerCase()];
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((word) => {
+      if (!word) return '';
+      return word[0].toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+function formatFreightosLocation(location: string): string {
+  const trimmed = location.trim();
+  if (!trimmed) return trimmed;
+  if (/\d/.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+  if (/^[A-Z]{3,5}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return trimmed;
+  const city = toTitleCase(parts[0]);
+  const rest = parts.slice(1).map((part) => normalizeState(part) || toTitleCase(part));
+  return [city, ...rest].join(', ');
+}
+
+function extractStateAbbreviation(location: string): string | undefined {
+  const match = location.match(/,\s*([A-Z]{2})\b/i);
+  return match ? match[1].toUpperCase() : undefined;
+}
+
+async function lookupZipDetails(zip: string): Promise<{ city: string; state: string } | null> {
+  try {
+    const response = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const place = data?.places?.[0];
+    if (!place) return null;
+    return {
+      city: place['place name'],
+      state: place['state abbreviation']
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function geocodeCity(location: string): Promise<{ city?: string; state?: string; zip?: string; lat?: string; lon?: string } | null> {
+  const query = `${location}, USA`;
+  try {
+    const url = `${NOMINATIM_URL}?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(query)}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'freight-quoting-portal/1.0 (Jason@epmarine.com)',
+        'Accept-Language': 'en',
+        'Referer': 'https://freight-quoting-portal.vercel.app'
+      }
+    });
+    if (!response.ok) return null;
+    const results = await response.json();
+    const first = results?.[0];
+    if (!first?.address) return null;
+    const address = first.address;
+    const zip = address.postcode?.match(/\d{5}/)?.[0];
+    return {
+      city: address.city || address.town || address.village || address.hamlet,
+      state: address.state,
+      zip,
+      lat: first.lat,
+      lon: first.lon
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function reverseGeocodeZip(lat: string, lon: string): Promise<string | null> {
+  try {
+    const url = `${NOMINATIM_REVERSE_URL}?format=json&addressdetails=1&zoom=18&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'freight-quoting-portal/1.0 (Jason@epmarine.com)',
+        'Accept-Language': 'en',
+        'Referer': 'https://freight-quoting-portal.vercel.app'
+      }
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    const postcode = data?.address?.postcode;
+    return postcode?.match(/\d{5}/)?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function lookupZipByCityState(city: string, state: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://api.zippopotam.us/us/${state}/${encodeURIComponent(city)}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const place = data?.places?.[0];
+    return place?.['post code'] || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveUsAddress(location: string): Promise<{ city: string; state: string; zip: string } | null> {
+  const cacheKey = location.toLowerCase();
+  const cached = LOCATION_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const stateHint = normalizeState(extractStateAbbreviation(location));
+  const zipFromInput = extractZip(location);
+  if (zipFromInput) {
+    const details = await lookupZipDetails(zipFromInput);
+    const resolved = {
+      city: details?.city || toTitleCase(location.split(',')[0] || ''),
+      state: normalizeState(details?.state) || stateHint || '',
+      zip: zipFromInput
+    };
+    if (resolved.city && resolved.state) {
+      LOCATION_CACHE.set(cacheKey, resolved);
+      return resolved;
+    }
+  }
+
+  const geocoded = await geocodeCity(location);
+  let zip = geocoded?.zip?.match(/\d{5}/)?.[0] || null;
+  if (!zip && geocoded?.lat && geocoded?.lon) {
+    zip = await reverseGeocodeZip(geocoded.lat, geocoded.lon);
+  }
+
+  const city = geocoded?.city || toTitleCase(location.split(',')[0] || '');
+  const state = normalizeState(geocoded?.state) || stateHint || '';
+
+  if (!zip && city && state) {
+    zip = await lookupZipByCityState(city, state);
+  }
+
+  if (zip) {
+    const details = await lookupZipDetails(zip);
+    const resolved = {
+      city: details?.city || city,
+      state: normalizeState(details?.state) || state,
+      zip
+    };
+    if (resolved.city && resolved.state) {
+      LOCATION_CACHE.set(cacheKey, resolved);
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+async function buildShippoAddress(
+  location: string,
+  country: string
+): Promise<{ city: string; state: string; zip: string; country: string } | null> {
+  if (country !== 'US') {
+    const geocoded = await geocodeCity(location);
+    const zip = geocoded?.zip?.match(/\d{5}/)?.[0] || undefined;
+    return {
+      city: geocoded?.city || toTitleCase(location.split(',')[0] || ''),
+      state: normalizeState(geocoded?.state) || '',
+      zip: zip || '',
+      country
+    };
+  }
+  const resolved = await resolveUsAddress(location);
+  if (!resolved) return null;
+  return { ...resolved, country: 'US' };
+}
+
+function collectMatches(pattern: RegExp, input: string): RegExpExecArray[] {
+  const matches: RegExpExecArray[] = [];
+  pattern.lastIndex = 0;
+  let match = pattern.exec(input);
+  while (match) {
+    matches.push(match);
+    match = pattern.exec(input);
+  }
+  return matches;
+}
+
+function normalizeLength(value: number, unit?: string): number {
+  if (!unit) return value;
+  const normalized = unit.toLowerCase();
+  if (normalized === 'cm' || normalized === 'cms' || normalized.startsWith('centimetro')) {
+    return value * INCHES_PER_CM;
+  }
+  if (normalized === '"' || normalized === 'in' || normalized === 'inch' || normalized === 'inches' || normalized.startsWith('pulgada')) {
+    return value;
+  }
+  return value;
+}
+
+function normalizeWeight(value: number, unit?: string): number {
+  if (!unit) return value;
+  const normalized = unit.toLowerCase();
+  if (normalized === 'kg' || normalized === 'kgs' || normalized.startsWith('kilo') || normalized.startsWith('kilogramo')) {
+    return value * POUNDS_PER_KG;
+  }
+  if (normalized === 'lb' || normalized === 'lbs' || normalized.startsWith('pound') || normalized.startsWith('libra')) {
+    return value;
+  }
+  return value;
+}
 
 function parseNaturalLanguage(input: string): ParsedRequest {
-  const text = input.toLowerCase();
+  const normalizedInput = input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const text = normalizedInput.toLowerCase();
   const parcels: Parcel[] = [];
   
   // Parse multiple boxes with various formats
-  const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|cm|")?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
-  const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/gi;
+  const dimSeparatorPattern = '(?:x|\\u00d7|\\*|by|por)';
+  const dimUnitPattern = '(in\\.?|inch(?:es)?|cm|cms|centimetro(?:s)?|pulgada(?:s)?|")';
+  const weightUnitPattern = '(lb|lbs|pound(?:s)?|libra(?:s)?|kg|kgs|kilo(?:s)?|kilogramo(?:s)?)';
+  const boxPattern = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*(?:,|\\s)*(?:weighing\\s+|weight\\s+|weighs\\s+|peso\\s+|pesa\\s+|pesando\\s+)?(\\d+(?:\\.\\d+)?)(?:\\s*${weightUnitPattern})?`,
+    'gi'
+  );
+  const dimOnlyPattern = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?`,
+    'gi'
+  );
+  const weightPattern = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${weightUnitPattern}\\b`, 'gi');
+  const weightWordPattern = new RegExp(`(?:weight|weighs|weighing|peso|pesa|pesando)\\s*(\\d+(?:\\.\\d+)?)(?:\\s*${weightUnitPattern})?`, 'i');
+  const weightWordMatch = normalizedInput.match(weightWordPattern);
+  const defaultWeight = weightWordMatch
+    ? normalizeWeight(parseFloat(weightWordMatch[1]), weightWordMatch[2])
+    : undefined;
 
-  let matches = [...input.matchAll(boxPattern)];
+  let matches = collectMatches(boxPattern, normalizedInput);
   
   if (matches.length > 0) {
     for (const match of matches) {
       parcels.push({
-        length: parseFloat(match[1]),
-        width: parseFloat(match[2]),
-        height: parseFloat(match[3]),
-        weight: parseFloat(match[4])
+        length: normalizeLength(parseFloat(match[1]), match[2]),
+        width: normalizeLength(parseFloat(match[3]), match[4]),
+        height: normalizeLength(parseFloat(match[5]), match[6]),
+        weight: normalizeWeight(parseFloat(match[7]), match[8])
       });
     }
   } else {
-    const dimMatches = [...input.matchAll(dimOnlyPattern)];
-    const weightPattern = /(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
-    const weightMatches = [...input.matchAll(weightPattern)];
+    const dimMatches = collectMatches(dimOnlyPattern, normalizedInput);
+    const weightMatches = collectMatches(weightPattern, normalizedInput);
     
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
-      const weight = weightMatches[i] ? parseFloat(weightMatches[i][1]) : 10;
+      const weightUnit = weightMatches[i]?.[2];
+      const weight = weightMatches[i]
+        ? normalizeWeight(parseFloat(weightMatches[i][1]), weightUnit)
+        : defaultWeight ?? 10;
       parcels.push({
-        length: parseFloat(dim[1]),
-        width: parseFloat(dim[2]),
-        height: parseFloat(dim[3]),
+        length: normalizeLength(parseFloat(dim[1]), dim[2]),
+        width: normalizeLength(parseFloat(dim[3]), dim[4]),
+        height: normalizeLength(parseFloat(dim[5]), dim[6]),
         weight: weight
       });
     }
   }
 
   // Parse origin and destination
-  const fromMatch = text.match(/from\s+([\w\s,]+?)(?:\s+to\s+|$)/i);
-  const toMatch = text.match(/to\s+([\w\s,]+?)(?:\s+from|$|\.|\n)/i);
+  const fromMatch = normalizedInput.match(/\b(?:from|desde|de)\s+([\w\s,.-]+?)(?:\s+(?:to|a|hasta)\s+|$)/i);
+  const toMatch = normalizedInput.match(/\b(?:to|a|hasta)\s+([\w\s,.-]+?)(?:\s+(?:from|de|desde)|$|\.|\n)/i);
   
   let origin = '';
   let destination = '';
   
-  const zipCodes = input.match(/\b\d{5}(-\d{4})?\b/g) || [];
+  const zipCodes = normalizedInput.match(/\b\d{5}(-\d{4})?\b/g) || [];
   
   if (fromMatch) {
     origin = fromMatch[1].trim();
   } else if (zipCodes.length >= 1) {
-    origin = zipCodes[0];
+    origin = zipCodes[0] || '';
   }
   
   if (toMatch) {
     destination = toMatch[1].trim();
   } else if (zipCodes.length >= 2) {
-    destination = zipCodes[1];
+    destination = zipCodes[1] || '';
+  }
+
+  if (!origin || !destination) {
+    const stripped = normalizedInput
+      .replace(boxPattern, ' ')
+      .replace(dimOnlyPattern, ' ')
+      .replace(weightPattern, ' ')
+      .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+      .replace(/\b(ship|shipping|box|boxes|caja|cajas|paquete|paquetes|pallet|pallets|palet|palets|paleta|paletas|crate|crates|package|packages|parcel|parcels|freight|envio|enviar|weighing|weight|weighs|peso|pesa|pesando|lb|lbs|pound|pounds|libra|libras|kg|kgs|kilo|kilos|kilogramo|kilogramos|inch|inches|in|cm|cms|centimetro|centimetros|pulgada|pulgadas)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const simpleRoute = stripped.match(/(?:from|de|desde)?\s*(.+?)\s+(?:to|a|hasta)\s+(.+)/i);
+    if (simpleRoute) {
+      if (!origin) origin = simpleRoute[1].trim();
+      if (!destination) destination = simpleRoute[2].trim();
+    }
   }
 
   const originCountry = detectCountry(origin);
@@ -161,11 +498,22 @@ function detectCountry(location: string): string {
   if (/mexico|mexico city|guadalajara|cancun/i.test(loc)) return 'MX';
   if (/india|mumbai|delhi|bangalore/i.test(loc)) return 'IN';
   if (/australia|sydney|melbourne|brisbane/i.test(loc)) return 'AU';
+  if (/brazil|brasil|rio de janeiro|sao paulo/i.test(loc)) return 'BR';
+  if (/puerto rico|san juan/i.test(loc)) return 'US';
+  if (/spain|espana|madrid|barcelona/i.test(loc)) return 'ES';
+  if (/colombia|bogota|medellin|cali/i.test(loc)) return 'CO';
+  if (/argentina|buenos aires|cordoba|rosario/i.test(loc)) return 'AR';
+  if (/peru|lima/i.test(loc)) return 'PE';
+  if (/chile|santiago/i.test(loc)) return 'CL';
+  if (/venezuela|caracas/i.test(loc)) return 'VE';
   
   return 'US';
 }
 
-async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
+async function getShippoQuotes(
+  parsed: ParsedRequest,
+  contact?: { email?: string; phone?: string }
+): Promise<QuoteResult[]> {
   const SHIPPO_API_KEY = process.env.SHIPPO_API_KEY;
   
   if (!SHIPPO_API_KEY) {
@@ -174,22 +522,39 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   }
 
   try {
+    const contactEmail = contact?.email || DEFAULT_CONTACT_EMAIL;
+    const contactPhone = contact?.phone || DEFAULT_CONTACT_PHONE;
+    const [originResolved, destinationResolved] = await Promise.all([
+      buildShippoAddress(parsed.origin, parsed.originCountry),
+      buildShippoAddress(parsed.destination, parsed.destCountry)
+    ]);
+    if (!originResolved || !destinationResolved) {
+      console.log('Unable to resolve addresses for Shippo');
+      return [];
+    }
+
     const addressFrom = {
       name: 'Sender',
       street1: '123 Main St',
-      city: parsed.origin.match(/\d{5}/) ? 'City' : parsed.origin.split(',')[0] || 'Miami',
-      state: 'FL',
-      zip: parsed.origin.match(/\d{5}/)?.[0] || '33142',
-      country: parsed.originCountry
+      city: originResolved.city,
+      state: originResolved.state,
+      zip: originResolved.zip,
+      country: originResolved.country,
+      email: contactEmail,
+      phone: contactPhone,
+      is_residential: false
     };
 
     const addressTo = {
       name: 'Recipient',
       street1: '456 Oak Ave',
-      city: parsed.destination.match(/\d{5}/) ? 'City' : parsed.destination.split(',')[0] || 'Los Angeles',
-      state: 'CA',
-      zip: parsed.destination.match(/\d{5}/)?.[0] || '90210',
-      country: parsed.destCountry
+      city: destinationResolved.city,
+      state: destinationResolved.state,
+      zip: destinationResolved.zip,
+      country: destinationResolved.country,
+      email: contactEmail,
+      phone: contactPhone,
+      is_residential: false
     };
 
     const parcels = parsed.parcels.map(p => ({
@@ -237,26 +602,112 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
 async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   try {
     const totalWeight = parsed.parcels.reduce((sum, p) => sum + p.weight, 0);
-    const totalVolume = parsed.parcels.reduce((sum, p) => {
-      return sum + (p.length * p.width * p.height) / 61023.7;
-    }, 0);
-
-    const origin = encodeURIComponent(parsed.origin || '33142');
-    const destination = encodeURIComponent(parsed.destination || '90210');
     const weightKg = Math.ceil(totalWeight * 0.453592);
-    
-    const dimCm = Math.ceil(Math.pow(totalVolume * 1000000, 1/3));
-    
-    const url = `https://ship.freightos.com/api/shippingCalculator?estimate=true&origin=${origin}&destination=${destination}&weight=${weightKg}kg&width=${dimCm}cm&length=${dimCm}cm&height=${dimCm}cm&quantity=1&format=json&resultSet=all`;
+    const parcelCount = Math.max(parsed.parcels.length, 1);
+    const weightPerUnit = totalWeight / parcelCount;
+    const totalVolume = parsed.parcels.reduce((sum, p) => sum + (p.length * p.width * p.height), 0);
+    const maxLength = Math.max(...parsed.parcels.map((p) => p.length));
+    const maxWidth = Math.max(...parsed.parcels.map((p) => p.width));
+    const maxHeight = Math.max(...parsed.parcels.map((p) => p.height));
+    const loadType = parsed.isPallet ? 'pallets' : 'boxes';
+    const freightosKey = process.env.FREIGHTOS_API_KEY;
+    const isDomestic = parsed.originCountry === parsed.destCountry;
+    const isFreight = parsed.isPallet || totalWeight > 150 || totalVolume > 50000;
+    const allowAir = !(isDomestic && isFreight);
+    const formatMeasure = (value: number, unit: string) => `${Math.round(value * 100) / 100}${unit}`;
+
+    const params = new URLSearchParams({
+      loadtype: loadType,
+      origin: formatFreightosLocation(parsed.origin || '33142'),
+      destination: formatFreightosLocation(parsed.destination || '90210'),
+      weight: formatMeasure(weightPerUnit, 'lb'),
+      width: formatMeasure(maxWidth, 'inch'),
+      length: formatMeasure(maxLength, 'inch'),
+      height: formatMeasure(maxHeight, 'inch'),
+      quantity: String(parcelCount),
+      format: 'json',
+      resultSet: 'all',
+      originType: 'Warehouse',
+      destinationType: 'Warehouse',
+      liftgate: 'false',
+      loadingDock: 'false',
+      customsBrokerage: 'false',
+      knownShipper: 'false',
+      insurance: 'false',
+      goodsReady: 'true',
+      value: '1000'
+    });
+
+    if (freightosKey) {
+      params.set('key', freightosKey);
+    }
+
+    const url = `https://ship.freightos.com/api/shippingCalculator?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as FreightosEstimateResponse & { rates?: FreightosRate[]; results?: FreightosRate[] };
     
     const quotes: QuoteResult[] = [];
+    const estimated = data.response?.estimatedFreightRates;
+    const parseAmount = (amount?: string | number) => {
+      if (amount === undefined || amount === null) return 0;
+      return typeof amount === 'number' ? amount : parseFloat(amount);
+    };
+    const toTransitDays = (transit?: FreightosEstimateMode['transitTimes']) => {
+      if (!transit) return undefined;
+      if (transit.min && transit.max) {
+        return `${transit.min}-${transit.max} ${transit.unit || 'days'}`;
+      }
+      if (transit.min) {
+        return `${transit.min} ${transit.unit || 'days'}`;
+      }
+      return undefined;
+    };
+
+    if (estimated?.mode) {
+      const modes = Array.isArray(estimated.mode) ? estimated.mode : [estimated.mode];
+      const airModes = allowAir
+        ? modes.filter((mode) => {
+            const label = mode.mode?.toLowerCase();
+            return label === 'air' || label === 'express';
+          })
+        : [];
+      const freightModes = modes.filter((mode) => {
+        const label = mode.mode?.toLowerCase();
+        return label === 'lcl' || label === 'fcl' || label === 'sea' || label === 'ocean' || label === 'ltl' || label === 'ftl';
+      });
+
+      const buildCheapest = (modeList: FreightosEstimateMode[], label: string, fallbackMode: string) => {
+        if (modeList.length === 0) return;
+        const cheapest = modeList.reduce((min, mode) => {
+          const price = parseAmount(mode.price?.min?.moneyAmount?.amount || mode.price?.moneyAmount?.amount);
+          const minPrice = parseAmount(min.price?.min?.moneyAmount?.amount || min.price?.moneyAmount?.amount) || Number.POSITIVE_INFINITY;
+          return price && price < minPrice ? mode : min;
+        }, modeList[0]);
+        const amount = parseAmount(cheapest.price?.min?.moneyAmount?.amount || cheapest.price?.moneyAmount?.amount);
+        if (!amount) return;
+        const currency = cheapest.price?.min?.moneyAmount?.currency || cheapest.price?.moneyAmount?.currency || 'USD';
+        quotes.push({
+          provider: 'Freightos',
+          service: `${label} (Estimate)`,
+          price: amount,
+          currency,
+          mode: fallbackMode,
+          transitDays: toTransitDays(cheapest.transitTimes)
+        });
+      };
+
+      if (allowAir) {
+        buildCheapest(airModes, 'Air Freight', 'Air');
+      }
+      const freightLabel = isDomestic && isFreight ? 'Ground Freight' : 'Ocean Freight';
+      const freightMode = isDomestic && isFreight ? 'Ground' : 'Ocean/LCL';
+      buildCheapest(freightModes, freightLabel, freightMode);
+    }
     
     if (data.rates || data.results) {
       const rates: FreightosRate[] = data.rates || data.results || [];
@@ -313,23 +764,26 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
     if (quotes.length === 0) {
       const baseAirRate = 3.5;
       const baseOceanRate = 0.8;
+      const baseGroundRate = 1.2;
+      
+      if (allowAir) {
+        quotes.push({
+          provider: 'Freightos',
+          service: 'Air Freight (Estimate)',
+          price: Math.round(weightKg * baseAirRate * 100) / 100,
+          currency: 'USD',
+          mode: 'Air',
+          transitDays: '3-7 days'
+        });
+      }
       
       quotes.push({
         provider: 'Freightos',
-        service: 'Air Freight (Estimate)',
-        price: Math.round(weightKg * baseAirRate * 100) / 100,
+        service: isDomestic && isFreight ? 'Ground Freight (Estimate)' : 'Ocean/LCL (Estimate)',
+        price: Math.round(weightKg * (isDomestic && isFreight ? baseGroundRate : baseOceanRate) * 100) / 100,
         currency: 'USD',
-        mode: 'Air',
-        transitDays: '3-7 days'
-      });
-      
-      quotes.push({
-        provider: 'Freightos',
-        service: 'Ocean/LCL (Estimate)',
-        price: Math.round(weightKg * baseOceanRate * 100) / 100,
-        currency: 'USD',
-        mode: 'Ocean/LCL',
-        transitDays: '15-30 days'
+        mode: isDomestic && isFreight ? 'Ground' : 'Ocean/LCL',
+        transitDays: isDomestic && isFreight ? '2-7 days' : '15-30 days'
       });
     }
     
@@ -415,11 +869,11 @@ export async function POST(req: NextRequest) {
       freightosQuotes = await getFreightosQuotes(parsed);
     } else if (!parsed.isInternational && parsed.parcels.length === 1 && parsed.parcels[0].weight < 70) {
       routing = 'Shippo Only (Domestic Parcel)';
-      shippoQuotes = await getShippoQuotes(parsed);
+      shippoQuotes = await getShippoQuotes(parsed, { email, phone });
     } else {
       routing = 'Both (Comparison)';
       [shippoQuotes, freightosQuotes] = await Promise.all([
-        getShippoQuotes(parsed),
+        getShippoQuotes(parsed, { email, phone }),
         getFreightosQuotes(parsed)
       ]);
     }
