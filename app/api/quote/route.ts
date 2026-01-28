@@ -356,19 +356,31 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   const parcels: Parcel[] = [];
   
   // Parse multiple boxes with various formats
-  const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
-  const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?/gi;
-  const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
+  const dimUnitPattern = '(in|inch|inches|cm|")';
+  const boxPattern = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*(?:,|\\s)*(?:weighing\\s+|weight\\s+)?(\\d+(?:\\.\\d+)?)(?:\\s*(lb|lbs|pound|pounds|kg|kgs))?`,
+    'gi'
+  );
+  const dimOnlyPattern = new RegExp(
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?`,
+    'gi'
+  );
+  const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)\b/gi;
+  const weightWordPattern = /(?:weight|weighs|weighing)\s*(\d+(?:\.\d+)?)(?:\s*(lb|lbs|pound|pounds|kg|kgs))?/i;
+  const weightWordMatch = input.match(weightWordPattern);
+  const defaultWeight = weightWordMatch
+    ? normalizeWeight(parseFloat(weightWordMatch[1]), weightWordMatch[2])
+    : undefined;
 
   let matches = collectMatches(boxPattern, input);
   
   if (matches.length > 0) {
     for (const match of matches) {
       parcels.push({
-        length: normalizeLength(parseFloat(match[1]), match[4]),
-        width: normalizeLength(parseFloat(match[2]), match[4]),
-        height: normalizeLength(parseFloat(match[3]), match[4]),
-        weight: normalizeWeight(parseFloat(match[5]), match[6])
+        length: normalizeLength(parseFloat(match[1]), match[2]),
+        width: normalizeLength(parseFloat(match[3]), match[4]),
+        height: normalizeLength(parseFloat(match[5]), match[6]),
+        weight: normalizeWeight(parseFloat(match[7]), match[8])
       });
     }
   } else {
@@ -378,12 +390,13 @@ function parseNaturalLanguage(input: string): ParsedRequest {
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
       const weightUnit = weightMatches[i]?.[2];
-      const weight = weightMatches[i] ? normalizeWeight(parseFloat(weightMatches[i][1]), weightUnit) : 10;
-      const dimUnit = dim[4];
+      const weight = weightMatches[i]
+        ? normalizeWeight(parseFloat(weightMatches[i][1]), weightUnit)
+        : defaultWeight ?? 10;
       parcels.push({
-        length: normalizeLength(parseFloat(dim[1]), dimUnit),
-        width: normalizeLength(parseFloat(dim[2]), dimUnit),
-        height: normalizeLength(parseFloat(dim[3]), dimUnit),
+        length: normalizeLength(parseFloat(dim[1]), dim[2]),
+        width: normalizeLength(parseFloat(dim[3]), dim[4]),
+        height: normalizeLength(parseFloat(dim[5]), dim[6]),
         weight: weight
       });
     }
