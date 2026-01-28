@@ -331,6 +331,7 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   // Parse multiple boxes with various formats
   const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
   const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?/gi;
+  const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
 
   let matches = collectMatches(boxPattern, input);
   
@@ -345,7 +346,6 @@ function parseNaturalLanguage(input: string): ParsedRequest {
     }
   } else {
     const dimMatches = collectMatches(dimOnlyPattern, input);
-    const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
     const weightMatches = collectMatches(weightPattern, input);
     
     for (let i = 0; i < dimMatches.length; i++) {
