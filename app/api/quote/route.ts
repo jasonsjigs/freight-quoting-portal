@@ -72,7 +72,7 @@ interface FreightosEstimateResponse {
 
 // Country codes and detection
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
-const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
+const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'brasil', 'spain', 'espana', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan', 'colombia', 'argentina', 'peru', 'chile', 'venezuela'];
 const INCHES_PER_CM = 0.3937007874;
 const POUNDS_PER_KG = 2.2046226218;
 const DEFAULT_CONTACT_EMAIL = 'Jason@epmarine.com';
@@ -336,8 +336,11 @@ function collectMatches(pattern: RegExp, input: string): RegExpExecArray[] {
 function normalizeLength(value: number, unit?: string): number {
   if (!unit) return value;
   const normalized = unit.toLowerCase();
-  if (normalized === 'cm') {
+  if (normalized === 'cm' || normalized === 'cms' || normalized.startsWith('centimetro')) {
     return value * INCHES_PER_CM;
+  }
+  if (normalized === '"' || normalized === 'in' || normalized === 'inch' || normalized === 'inches' || normalized.startsWith('pulgada')) {
+    return value;
   }
   return value;
 }
@@ -345,34 +348,40 @@ function normalizeLength(value: number, unit?: string): number {
 function normalizeWeight(value: number, unit?: string): number {
   if (!unit) return value;
   const normalized = unit.toLowerCase();
-  if (normalized === 'kg' || normalized === 'kgs') {
+  if (normalized === 'kg' || normalized === 'kgs' || normalized.startsWith('kilo') || normalized.startsWith('kilogramo')) {
     return value * POUNDS_PER_KG;
+  }
+  if (normalized === 'lb' || normalized === 'lbs' || normalized.startsWith('pound') || normalized.startsWith('libra')) {
+    return value;
   }
   return value;
 }
 
 function parseNaturalLanguage(input: string): ParsedRequest {
-  const text = input.toLowerCase();
+  const normalizedInput = input.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const text = normalizedInput.toLowerCase();
   const parcels: Parcel[] = [];
   
   // Parse multiple boxes with various formats
-  const dimUnitPattern = '(in|inch|inches|cm|")';
+  const dimSeparatorPattern = '(?:x|\\u00d7|\\*|by|por)';
+  const dimUnitPattern = '(in\\.?|inch(?:es)?|cm|cms|centimetro(?:s)?|pulgada(?:s)?|")';
+  const weightUnitPattern = '(lb|lbs|pound(?:s)?|libra(?:s)?|kg|kgs|kilo(?:s)?|kilogramo(?:s)?)';
   const boxPattern = new RegExp(
-    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*(?:,|\\s)*(?:weighing\\s+|weight\\s+)?(\\d+(?:\\.\\d+)?)(?:\\s*(lb|lbs|pound|pounds|kg|kgs))?`,
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*(?:,|\\s)*(?:weighing\\s+|weight\\s+|weighs\\s+|peso\\s+|pesa\\s+|pesando\\s+)?(\\d+(?:\\.\\d+)?)(?:\\s*${weightUnitPattern})?`,
     'gi'
   );
   const dimOnlyPattern = new RegExp(
-    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*x\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?`,
+    `(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?\\s*${dimSeparatorPattern}\\s*(\\d+(?:\\.\\d+)?)\\s*(?:${dimUnitPattern})?`,
     'gi'
   );
-  const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)\b/gi;
-  const weightWordPattern = /(?:weight|weighs|weighing)\s*(\d+(?:\.\d+)?)(?:\s*(lb|lbs|pound|pounds|kg|kgs))?/i;
-  const weightWordMatch = input.match(weightWordPattern);
+  const weightPattern = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*${weightUnitPattern}\\b`, 'gi');
+  const weightWordPattern = new RegExp(`(?:weight|weighs|weighing|peso|pesa|pesando)\\s*(\\d+(?:\\.\\d+)?)(?:\\s*${weightUnitPattern})?`, 'i');
+  const weightWordMatch = normalizedInput.match(weightWordPattern);
   const defaultWeight = weightWordMatch
     ? normalizeWeight(parseFloat(weightWordMatch[1]), weightWordMatch[2])
     : undefined;
 
-  let matches = collectMatches(boxPattern, input);
+  let matches = collectMatches(boxPattern, normalizedInput);
   
   if (matches.length > 0) {
     for (const match of matches) {
@@ -384,8 +393,8 @@ function parseNaturalLanguage(input: string): ParsedRequest {
       });
     }
   } else {
-    const dimMatches = collectMatches(dimOnlyPattern, input);
-    const weightMatches = collectMatches(weightPattern, input);
+    const dimMatches = collectMatches(dimOnlyPattern, normalizedInput);
+    const weightMatches = collectMatches(weightPattern, normalizedInput);
     
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
@@ -403,13 +412,13 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   }
 
   // Parse origin and destination
-  const fromMatch = input.match(/from\s+([\w\s,]+?)(?:\s+to\s+|$)/i);
-  const toMatch = input.match(/to\s+([\w\s,]+?)(?:\s+from|$|\.|\n)/i);
+  const fromMatch = normalizedInput.match(/\b(?:from|desde|de)\s+([\w\s,.-]+?)(?:\s+(?:to|a|hasta)\s+|$)/i);
+  const toMatch = normalizedInput.match(/\b(?:to|a|hasta)\s+([\w\s,.-]+?)(?:\s+(?:from|de|desde)|$|\.|\n)/i);
   
   let origin = '';
   let destination = '';
   
-  const zipCodes = input.match(/\b\d{5}(-\d{4})?\b/g) || [];
+  const zipCodes = normalizedInput.match(/\b\d{5}(-\d{4})?\b/g) || [];
   
   if (fromMatch) {
     origin = fromMatch[1].trim();
@@ -424,16 +433,16 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   }
 
   if (!origin || !destination) {
-    const stripped = input
+    const stripped = normalizedInput
       .replace(boxPattern, ' ')
       .replace(dimOnlyPattern, ' ')
       .replace(weightPattern, ' ')
       .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
-      .replace(/\b(ship|shipping|box|boxes|pallet|pallets|crate|crates|package|packages|parcel|parcels|freight|weighing|weight|lb|lbs|pound|pounds|kg|kgs|inch|inches|in|cm)\b/gi, ' ')
+      .replace(/\b(ship|shipping|box|boxes|caja|cajas|paquete|paquetes|pallet|pallets|palet|palets|paleta|paletas|crate|crates|package|packages|parcel|parcels|freight|envio|enviar|weighing|weight|weighs|peso|pesa|pesando|lb|lbs|pound|pounds|libra|libras|kg|kgs|kilo|kilos|kilogramo|kilogramos|inch|inches|in|cm|cms|centimetro|centimetros|pulgada|pulgadas)\b/gi, ' ')
       .replace(/\s+/g, ' ')
       .trim();
 
-    const simpleRoute = stripped.match(/(?:from\s+)?(.+?)\s+to\s+(.+)/i);
+    const simpleRoute = stripped.match(/(?:from|de|desde)?\s*(.+?)\s+(?:to|a|hasta)\s+(.+)/i);
     if (simpleRoute) {
       if (!origin) origin = simpleRoute[1].trim();
       if (!destination) destination = simpleRoute[2].trim();
@@ -489,8 +498,14 @@ function detectCountry(location: string): string {
   if (/mexico|mexico city|guadalajara|cancun/i.test(loc)) return 'MX';
   if (/india|mumbai|delhi|bangalore/i.test(loc)) return 'IN';
   if (/australia|sydney|melbourne|brisbane/i.test(loc)) return 'AU';
-  if (/brazil|rio de janeiro|sao paulo/i.test(loc)) return 'BR';
+  if (/brazil|brasil|rio de janeiro|sao paulo/i.test(loc)) return 'BR';
   if (/puerto rico|san juan/i.test(loc)) return 'US';
+  if (/spain|espana|madrid|barcelona/i.test(loc)) return 'ES';
+  if (/colombia|bogota|medellin|cali/i.test(loc)) return 'CO';
+  if (/argentina|buenos aires|cordoba|rosario/i.test(loc)) return 'AR';
+  if (/peru|lima/i.test(loc)) return 'PE';
+  if (/chile|santiago/i.test(loc)) return 'CL';
+  if (/venezuela|caracas/i.test(loc)) return 'VE';
   
   return 'US';
 }
