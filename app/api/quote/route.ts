@@ -75,6 +75,198 @@ const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
 const INCHES_PER_CM = 0.3937007874;
 const POUNDS_PER_KG = 2.2046226218;
+const DEFAULT_CONTACT_EMAIL = 'Jason@epmarine.com';
+const DEFAULT_CONTACT_PHONE = '786-603-7883';
+const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
+const LOCATION_CACHE = new Map<string, { city: string; state: string; zip: string }>();
+const US_STATE_ABBREVIATIONS: Record<string, string> = {
+  alabama: 'AL',
+  alaska: 'AK',
+  arizona: 'AZ',
+  arkansas: 'AR',
+  california: 'CA',
+  colorado: 'CO',
+  connecticut: 'CT',
+  delaware: 'DE',
+  florida: 'FL',
+  georgia: 'GA',
+  hawaii: 'HI',
+  idaho: 'ID',
+  illinois: 'IL',
+  indiana: 'IN',
+  iowa: 'IA',
+  kansas: 'KS',
+  kentucky: 'KY',
+  louisiana: 'LA',
+  maine: 'ME',
+  maryland: 'MD',
+  massachusetts: 'MA',
+  michigan: 'MI',
+  minnesota: 'MN',
+  mississippi: 'MS',
+  missouri: 'MO',
+  montana: 'MT',
+  nebraska: 'NE',
+  nevada: 'NV',
+  'new hampshire': 'NH',
+  'new jersey': 'NJ',
+  'new mexico': 'NM',
+  'new york': 'NY',
+  'north carolina': 'NC',
+  'north dakota': 'ND',
+  ohio: 'OH',
+  oklahoma: 'OK',
+  oregon: 'OR',
+  pennsylvania: 'PA',
+  'rhode island': 'RI',
+  'south carolina': 'SC',
+  'south dakota': 'SD',
+  tennessee: 'TN',
+  texas: 'TX',
+  utah: 'UT',
+  vermont: 'VT',
+  virginia: 'VA',
+  washington: 'WA',
+  'west virginia': 'WV',
+  wisconsin: 'WI',
+  wyoming: 'WY'
+};
+const DEFAULT_US_CITY_ZIPS: Record<string, { city: string; state: string; zip: string }> = {
+  miami: { city: 'Miami', state: 'FL', zip: '33142' },
+  tampa: { city: 'Tampa', state: 'FL', zip: '33602' },
+  'los angeles': { city: 'Los Angeles', state: 'CA', zip: '90001' },
+  'new york': { city: 'New York', state: 'NY', zip: '10001' },
+  chicago: { city: 'Chicago', state: 'IL', zip: '60601' },
+  houston: { city: 'Houston', state: 'TX', zip: '77002' },
+  dallas: { city: 'Dallas', state: 'TX', zip: '75201' },
+  atlanta: { city: 'Atlanta', state: 'GA', zip: '30301' },
+  seattle: { city: 'Seattle', state: 'WA', zip: '98101' },
+  boston: { city: 'Boston', state: 'MA', zip: '02108' },
+  denver: { city: 'Denver', state: 'CO', zip: '80202' },
+  orlando: { city: 'Orlando', state: 'FL', zip: '32801' },
+  phoenix: { city: 'Phoenix', state: 'AZ', zip: '85004' },
+  philadelphia: { city: 'Philadelphia', state: 'PA', zip: '19104' },
+  'san francisco': { city: 'San Francisco', state: 'CA', zip: '94105' }
+};
+
+function extractZip(location: string): string | null {
+  const match = location.match(/\b\d{5}(-\d{4})?\b/);
+  if (!match) return null;
+  return match[0].slice(0, 5);
+}
+
+function normalizeState(state?: string): string | undefined {
+  if (!state) return undefined;
+  const trimmed = state.trim();
+  if (trimmed.length === 2) return trimmed.toUpperCase();
+  return US_STATE_ABBREVIATIONS[trimmed.toLowerCase()];
+}
+
+function extractStateAbbreviation(location: string): string | undefined {
+  const match = location.match(/,\s*([A-Z]{2})\b/i);
+  return match ? match[1].toUpperCase() : undefined;
+}
+
+function normalizeCityKey(location: string): string {
+  return location
+    .split(',')[0]
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, '')
+    .trim();
+}
+
+async function lookupZipDetails(zip: string): Promise<{ city: string; state: string } | null> {
+  try {
+    const response = await fetch(`https://api.zippopotam.us/us/${zip}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    const place = data?.places?.[0];
+    if (!place) return null;
+    return {
+      city: place['place name'],
+      state: place['state abbreviation']
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function geocodeCity(location: string): Promise<{ city?: string; state?: string; zip?: string } | null> {
+  const query = `${location}, USA`;
+  try {
+    const url = `${NOMINATIM_URL}?format=json&addressdetails=1&limit=1&q=${encodeURIComponent(query)}`;
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'freight-quoting-portal/1.0 (Jason@epmarine.com)',
+        'Accept-Language': 'en',
+        'Referer': 'https://freight-quoting-portal.vercel.app'
+      }
+    });
+    if (!response.ok) return null;
+    const results = await response.json();
+    const first = results?.[0];
+    if (!first?.address) return null;
+    const address = first.address;
+    const zip = address.postcode?.match(/\d{5}/)?.[0];
+    return {
+      city: address.city || address.town || address.village || address.hamlet,
+      state: address.state,
+      zip
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveUsAddress(
+  location: string,
+  fallback: { city: string; state: string; zip: string }
+): Promise<{ city: string; state: string; zip: string }> {
+  const cacheKey = location.toLowerCase();
+  const cached = LOCATION_CACHE.get(cacheKey);
+  if (cached) return cached;
+
+  const stateHint = normalizeState(extractStateAbbreviation(location));
+  const zipFromInput = extractZip(location);
+  if (zipFromInput) {
+    const details = await lookupZipDetails(zipFromInput);
+    const resolved = {
+      city: details?.city || fallback.city,
+      state: normalizeState(details?.state) || stateHint || fallback.state,
+      zip: zipFromInput
+    };
+    LOCATION_CACHE.set(cacheKey, resolved);
+    return resolved;
+  }
+
+  const cityKey = normalizeCityKey(location);
+  const fallbackCity = DEFAULT_US_CITY_ZIPS[cityKey];
+  const geocoded = await geocodeCity(location);
+  const resolved = {
+    city: geocoded?.city || fallbackCity?.city || fallback.city,
+    state: normalizeState(geocoded?.state) || stateHint || fallbackCity?.state || fallback.state,
+    zip: geocoded?.zip || fallbackCity?.zip || fallback.zip
+  };
+  LOCATION_CACHE.set(cacheKey, resolved);
+  return resolved;
+}
+
+async function buildShippoAddress(
+  location: string,
+  country: string,
+  fallback: { city: string; state: string; zip: string }
+): Promise<{ city: string; state: string; zip: string; country: string }> {
+  if (country !== 'US') {
+    return {
+      city: location.split(',')[0]?.trim() || fallback.city,
+      state: fallback.state,
+      zip: fallback.zip,
+      country
+    };
+  }
+  const resolved = await resolveUsAddress(location, fallback);
+  return { ...resolved, country: 'US' };
+}
 
 function collectMatches(pattern: RegExp, input: string): RegExpExecArray[] {
   const matches: RegExpExecArray[] = [];
@@ -217,7 +409,10 @@ function detectCountry(location: string): string {
   return 'US';
 }
 
-async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
+async function getShippoQuotes(
+  parsed: ParsedRequest,
+  contact?: { email?: string; phone?: string }
+): Promise<QuoteResult[]> {
   const SHIPPO_API_KEY = process.env.SHIPPO_API_KEY;
   
   if (!SHIPPO_API_KEY) {
@@ -226,22 +421,45 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   }
 
   try {
+    const contactEmail = contact?.email || DEFAULT_CONTACT_EMAIL;
+    const contactPhone = contact?.phone || DEFAULT_CONTACT_PHONE;
+    const originFallback = DEFAULT_US_CITY_ZIPS[normalizeCityKey(parsed.origin)] || {
+      city: 'Miami',
+      state: 'FL',
+      zip: '33142'
+    };
+    const destinationFallback = DEFAULT_US_CITY_ZIPS[normalizeCityKey(parsed.destination)] || {
+      city: 'Los Angeles',
+      state: 'CA',
+      zip: '90210'
+    };
+    const [originResolved, destinationResolved] = await Promise.all([
+      buildShippoAddress(parsed.origin, parsed.originCountry, originFallback),
+      buildShippoAddress(parsed.destination, parsed.destCountry, destinationFallback)
+    ]);
+
     const addressFrom = {
       name: 'Sender',
       street1: '123 Main St',
-      city: parsed.origin.match(/\d{5}/) ? 'City' : parsed.origin.split(',')[0] || 'Miami',
-      state: 'FL',
-      zip: parsed.origin.match(/\d{5}/)?.[0] || '33142',
-      country: parsed.originCountry
+      city: originResolved.city,
+      state: originResolved.state,
+      zip: originResolved.zip,
+      country: originResolved.country,
+      email: contactEmail,
+      phone: contactPhone,
+      is_residential: false
     };
 
     const addressTo = {
       name: 'Recipient',
       street1: '456 Oak Ave',
-      city: parsed.destination.match(/\d{5}/) ? 'City' : parsed.destination.split(',')[0] || 'Los Angeles',
-      state: 'CA',
-      zip: parsed.destination.match(/\d{5}/)?.[0] || '90210',
-      country: parsed.destCountry
+      city: destinationResolved.city,
+      state: destinationResolved.state,
+      zip: destinationResolved.zip,
+      country: destinationResolved.country,
+      email: contactEmail,
+      phone: contactPhone,
+      is_residential: false
     };
 
     const parcels = parsed.parcels.map(p => ({
@@ -543,11 +761,11 @@ export async function POST(req: NextRequest) {
       freightosQuotes = await getFreightosQuotes(parsed);
     } else if (!parsed.isInternational && parsed.parcels.length === 1 && parsed.parcels[0].weight < 70) {
       routing = 'Shippo Only (Domestic Parcel)';
-      shippoQuotes = await getShippoQuotes(parsed);
+      shippoQuotes = await getShippoQuotes(parsed, { email, phone });
     } else {
       routing = 'Both (Comparison)';
       [shippoQuotes, freightosQuotes] = await Promise.all([
-        getShippoQuotes(parsed),
+        getShippoQuotes(parsed, { email, phone }),
         getFreightosQuotes(parsed)
       ]);
     }
