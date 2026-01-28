@@ -44,8 +44,6 @@ export default function Home() {
   const [phone, setPhone] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<QuoteResponse | null>(null);
-  const [showContactForm, setShowContactForm] = useState(false);
-  const [pendingRequest, setPendingRequest] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,23 +55,14 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          request: pendingRequest || input,
+          request: input,
           email: email || undefined,
           phone: phone || undefined
         }),
       });
 
       const data: QuoteResponse = await response.json();
-      
-      if (data.missingInfo && data.missingInfo.length > 0) {
-        setPendingRequest(input);
-        setShowContactForm(true);
-        setResult(data);
-      } else {
-        setResult(data);
-        setShowContactForm(false);
-        setPendingRequest('');
-      }
+      setResult(data);
     } catch {
       setResult({ 
         success: false, 
@@ -120,37 +109,50 @@ export default function Home() {
               disabled={loading}
             />
 
-            {showContactForm && (
-              <div className="mt-6 p-4 bg-amber-900/30 border border-amber-600/50 rounded-xl">
-                <p className="text-amber-400 text-sm mb-4">
-                  Please provide contact information to complete your quote request:
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="email" className="block text-slate-300 text-sm mb-1">Email</label>
-                    <input
-                      type="email"
-                      id="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="your@email.com"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="phone" className="block text-slate-300 text-sm mb-1">Phone (optional)</label>
-                    <input
-                      type="tel"
-                      id="phone"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="+1 (555) 123-4567"
-                    />
-                  </div>
+            <div className="mt-6 p-4 bg-slate-900/40 border border-slate-700 rounded-xl">
+              <p className="text-slate-300 text-sm mb-4">
+                Contact info (optional for follow-up)
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="email" className="block text-slate-300 text-sm mb-1">Email</label>
+                  <input
+                    type="email"
+                    id="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="your@email.com"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="phone" className="block text-slate-300 text-sm mb-1">Phone (optional)</label>
+                  <input
+                    type="tel"
+                    id="phone"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-900/50 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="+1 (555) 123-4567"
+                  />
                 </div>
               </div>
-            )}
+            </div>
+
+            {result?.missingInfo?.length ? (
+              <div className="mt-4 p-4 bg-amber-900/30 border border-amber-600/50 rounded-xl">
+                <p className="text-amber-300 text-sm">
+                  {result.error || 'Missing shipment details. Please add package dimensions, weight, origin, and destination.'}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {result.missingInfo.map((item) => (
+                    <span key={item} className="px-2 py-1 bg-amber-500/20 text-amber-200 text-xs rounded-full">
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <button
               type="submit"
@@ -165,7 +167,7 @@ export default function Home() {
                   </svg>
                   Getting Quotes...
                 </span>
-              ) : showContactForm ? 'Submit with Contact Info' : 'Get Quotes'}
+              ) : 'Get Quotes'}
             </button>
           </form>
 
