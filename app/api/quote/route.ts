@@ -162,6 +162,32 @@ function normalizeState(state?: string): string | undefined {
   return US_STATE_ABBREVIATIONS[trimmed.toLowerCase()];
 }
 
+function toTitleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .map((word) => {
+      if (!word) return '';
+      return word[0].toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+function formatFreightosLocation(location: string): string {
+  const trimmed = location.trim();
+  if (!trimmed) return trimmed;
+  if (/\d/.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+  if (/^[A-Z]{3,5}$/.test(trimmed)) {
+    return trimmed;
+  }
+  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) return trimmed;
+  const city = toTitleCase(parts[0]);
+  const rest = parts.slice(1).map((part) => normalizeState(part) || toTitleCase(part));
+  return [city, ...rest].join(', ');
+}
+
 function extractStateAbbreviation(location: string): string | undefined {
   const match = location.match(/,\s*([A-Z]{2})\b/i);
   return match ? match[1].toUpperCase() : undefined;
@@ -519,8 +545,8 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
 
     const params = new URLSearchParams({
       loadtype: loadType,
-      origin: parsed.origin || '33142',
-      destination: parsed.destination || '90210',
+      origin: formatFreightosLocation(parsed.origin || '33142'),
+      destination: formatFreightosLocation(parsed.destination || '90210'),
       weight: formatMeasure(weightPerUnit, 'lb'),
       width: formatMeasure(maxWidth, 'inch'),
       length: formatMeasure(maxLength, 'inch'),
