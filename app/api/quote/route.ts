@@ -545,11 +545,15 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
     const weightKg = Math.ceil(totalWeight * 0.453592);
     const parcelCount = Math.max(parsed.parcels.length, 1);
     const weightPerUnit = totalWeight / parcelCount;
+    const totalVolume = parsed.parcels.reduce((sum, p) => sum + (p.length * p.width * p.height), 0);
     const maxLength = Math.max(...parsed.parcels.map((p) => p.length));
     const maxWidth = Math.max(...parsed.parcels.map((p) => p.width));
     const maxHeight = Math.max(...parsed.parcels.map((p) => p.height));
     const loadType = parsed.isPallet ? 'pallets' : 'boxes';
     const freightosKey = process.env.FREIGHTOS_API_KEY;
+    const isDomestic = parsed.originCountry === parsed.destCountry;
+    const isFreight = parsed.isPallet || totalWeight > 150 || totalVolume > 50000;
+    const allowAir = !(isDomestic && isFreight);
     const formatMeasure = (value: number, unit: string) => `${Math.round(value * 100) / 100}${unit}`;
 
     const params = new URLSearchParams({
@@ -606,13 +610,15 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
 
     if (estimated?.mode) {
       const modes = Array.isArray(estimated.mode) ? estimated.mode : [estimated.mode];
-      const airModes = modes.filter((mode) => {
+      const airModes = allowAir
+        ? modes.filter((mode) => {
+            const label = mode.mode?.toLowerCase();
+            return label === 'air' || label === 'express';
+          })
+        : [];
+      const freightModes = modes.filter((mode) => {
         const label = mode.mode?.toLowerCase();
-        return label === 'air' || label === 'express';
-      });
-      const oceanModes = modes.filter((mode) => {
-        const label = mode.mode?.toLowerCase();
-        return label === 'lcl' || label === 'fcl' || label === 'sea' || label === 'ocean';
+        return label === 'lcl' || label === 'fcl' || label === 'sea' || label === 'ocean' || label === 'ltl' || label === 'ftl';
       });
 
       const buildCheapest = (modeList: FreightosEstimateMode[], label: string, fallbackMode: string) => {
@@ -635,8 +641,12 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
         });
       };
 
-      buildCheapest(airModes, 'Air Freight', 'Air');
-      buildCheapest(oceanModes, 'Ocean Freight', 'Ocean/LCL');
+      if (allowAir) {
+        buildCheapest(airModes, 'Air Freight', 'Air');
+      }
+      const freightLabel = isDomestic && isFreight ? 'Ground Freight' : 'Ocean Freight';
+      const freightMode = isDomestic && isFreight ? 'Ground' : 'Ocean/LCL';
+      buildCheapest(freightModes, freightLabel, freightMode);
     }
     
     if (data.rates || data.results) {
@@ -694,23 +704,26 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]>
     if (quotes.length === 0) {
       const baseAirRate = 3.5;
       const baseOceanRate = 0.8;
+      const baseGroundRate = 1.2;
+      
+      if (allowAir) {
+        quotes.push({
+          provider: 'Freightos',
+          service: 'Air Freight (Estimate)',
+          price: Math.round(weightKg * baseAirRate * 100) / 100,
+          currency: 'USD',
+          mode: 'Air',
+          transitDays: '3-7 days'
+        });
+      }
       
       quotes.push({
         provider: 'Freightos',
-        service: 'Air Freight (Estimate)',
-        price: Math.round(weightKg * baseAirRate * 100) / 100,
+        service: isDomestic && isFreight ? 'Ground Freight (Estimate)' : 'Ocean/LCL (Estimate)',
+        price: Math.round(weightKg * (isDomestic && isFreight ? baseGroundRate : baseOceanRate) * 100) / 100,
         currency: 'USD',
-        mode: 'Air',
-        transitDays: '3-7 days'
-      });
-      
-      quotes.push({
-        provider: 'Freightos',
-        service: 'Ocean/LCL (Estimate)',
-        price: Math.round(weightKg * baseOceanRate * 100) / 100,
-        currency: 'USD',
-        mode: 'Ocean/LCL',
-        transitDays: '15-30 days'
+        mode: isDomestic && isFreight ? 'Ground' : 'Ocean/LCL',
+        transitDays: isDomestic && isFreight ? '2-7 days' : '15-30 days'
       });
     }
     
