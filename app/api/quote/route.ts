@@ -136,13 +136,13 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   if (fromMatch) {
     origin = fromMatch[1].trim();
   } else if (zipCodes.length >= 1) {
-    origin = zipCodes[0];
+    origin = zipCodes[0] || '';
   }
   
   if (toMatch) {
     destination = toMatch[1].trim();
   } else if (zipCodes.length >= 2) {
-    destination = zipCodes[1];
+    destination = zipCodes[1] || '';
   }
 
   const originCountry = detectCountry(origin);
