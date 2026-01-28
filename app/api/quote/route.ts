@@ -51,6 +51,25 @@ interface FreightosRate {
   service?: string;
 }
 
+interface FreightosEstimateMode {
+  mode?: string;
+  price?: {
+    min?: { moneyAmount?: { amount?: string; currency?: string } };
+    max?: { moneyAmount?: { amount?: string; currency?: string } };
+    moneyAmount?: { amount?: string; currency?: string };
+  };
+  transitTimes?: { min?: string; max?: string; unit?: string };
+}
+
+interface FreightosEstimateResponse {
+  response?: {
+    estimatedFreightRates?: {
+      numQuotes?: string | number;
+      mode?: FreightosEstimateMode | FreightosEstimateMode[];
+    };
+  };
+}
+
 // Country codes and detection
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
@@ -270,26 +289,73 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
 async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   try {
     const totalWeight = parsed.parcels.reduce((sum, p) => sum + p.weight, 0);
-    const totalVolume = parsed.parcels.reduce((sum, p) => {
-      return sum + (p.length * p.width * p.height) / 61023.7;
-    }, 0);
-
-    const origin = encodeURIComponent(parsed.origin || '33142');
-    const destination = encodeURIComponent(parsed.destination || '90210');
+    const parcelCount = Math.max(parsed.parcels.length, 1);
+    const weightPerUnit = totalWeight / parcelCount;
+    const maxLength = Math.max(...parsed.parcels.map((p) => p.length));
+    const maxWidth = Math.max(...parsed.parcels.map((p) => p.width));
+    const maxHeight = Math.max(...parsed.parcels.map((p) => p.height));
     const weightKg = Math.ceil(totalWeight * 0.453592);
-    
-    const dimCm = Math.ceil(Math.pow(totalVolume * 1000000, 1/3));
-    
-    const url = `https://ship.freightos.com/api/shippingCalculator?estimate=true&origin=${origin}&destination=${destination}&weight=${weightKg}kg&width=${dimCm}cm&length=${dimCm}cm&height=${dimCm}cm&quantity=1&format=json&resultSet=all`;
+    const loadType = parsed.isPallet ? 'pallets' : 'boxes';
+    const freightosKey = process.env.FREIGHTOS_API_KEY;
+    const formatMeasure = (value: number, unit: string) => `${Math.round(value * 100) / 100}${unit}`;
+
+    const params = new URLSearchParams({
+      estimate: 'true',
+      loadtype: loadType,
+      origin: parsed.origin || '33142',
+      destination: parsed.destination || '90210',
+      weight: formatMeasure(weightPerUnit, 'lb'),
+      width: formatMeasure(maxWidth, 'inch'),
+      length: formatMeasure(maxLength, 'inch'),
+      height: formatMeasure(maxHeight, 'inch'),
+      quantity: String(parcelCount),
+      format: 'json',
+      resultSet: 'all'
+    });
+
+    if (freightosKey) {
+      params.set('apiKey', freightosKey);
+    }
+
+    const url = `https://ship.freightos.com/api/shippingCalculator?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
       headers: { 'Accept': 'application/json' }
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as FreightosEstimateResponse & { rates?: FreightosRate[]; results?: FreightosRate[] };
     
     const quotes: QuoteResult[] = [];
+    const estimated = data.response?.estimatedFreightRates;
+
+    if (estimated?.mode) {
+      const modes = Array.isArray(estimated.mode) ? estimated.mode : [estimated.mode];
+      for (const mode of modes) {
+        const minAmount = mode.price?.min?.moneyAmount?.amount;
+        const amount = minAmount || mode.price?.moneyAmount?.amount;
+        const price = amount ? parseFloat(amount) : 0;
+        const currency = mode.price?.min?.moneyAmount?.currency || mode.price?.moneyAmount?.currency || 'USD';
+        if (!price) {
+          continue;
+        }
+        const transit = mode.transitTimes;
+        const transitDays = transit?.min && transit?.max
+          ? `${transit.min}-${transit.max} ${transit.unit || 'days'}`
+          : transit?.min
+            ? `${transit.min} ${transit.unit || 'days'}`
+            : undefined;
+        const modeLabel = mode.mode ? mode.mode.toUpperCase() : 'FREIGHT';
+        quotes.push({
+          provider: 'Freightos',
+          service: `${modeLabel} (Estimate)`,
+          price,
+          currency,
+          mode: modeLabel,
+          transitDays
+        });
+      }
+    }
     
     if (data.rates || data.results) {
       const rates: FreightosRate[] = data.rates || data.results || [];
