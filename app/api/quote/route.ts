@@ -57,6 +57,17 @@ const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'german
 const INCHES_PER_CM = 0.3937007874;
 const POUNDS_PER_KG = 2.2046226218;
 
+function collectMatches(pattern: RegExp, input: string): RegExpExecArray[] {
+  const matches: RegExpExecArray[] = [];
+  pattern.lastIndex = 0;
+  let match = pattern.exec(input);
+  while (match) {
+    matches.push(match);
+    match = pattern.exec(input);
+  }
+  return matches;
+}
+
 function normalizeLength(value: number, unit?: string): number {
   if (!unit) return value;
   const normalized = unit.toLowerCase();
@@ -83,7 +94,7 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
   const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*(in|inch|inches|cm|"))?/gi;
 
-  let matches = [...input.matchAll(boxPattern)];
+  let matches = collectMatches(boxPattern, input);
   
   if (matches.length > 0) {
     for (const match of matches) {
@@ -95,9 +106,9 @@ function parseNaturalLanguage(input: string): ParsedRequest {
       });
     }
   } else {
-    const dimMatches = [...input.matchAll(dimOnlyPattern)];
+    const dimMatches = collectMatches(dimOnlyPattern, input);
     const weightPattern = /(\d+(?:\.\d+)?)\s*(lb|lbs|pound|pounds|kg|kgs)/gi;
-    const weightMatches = [...input.matchAll(weightPattern)];
+    const weightMatches = collectMatches(weightPattern, input);
     
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
