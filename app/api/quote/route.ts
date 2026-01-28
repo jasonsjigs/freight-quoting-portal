@@ -19,6 +19,38 @@ interface ParsedRequest {
   needsBothQuotes: boolean;
 }
 
+interface QuoteResult {
+  provider: string;
+  service: string;
+  price: number;
+  currency: string;
+  transitDays?: string;
+  mode?: string;
+}
+
+interface ShippoRate {
+  provider: string;
+  servicelevel?: { name?: string };
+  servicelevel_name?: string;
+  amount: string;
+  currency: string;
+  estimated_days?: number;
+  duration_terms?: string;
+}
+
+interface FreightosRate {
+  mode?: string;
+  transportMode?: string;
+  price?: number;
+  totalPrice?: number;
+  amount?: number;
+  currency?: string;
+  transitTime?: string;
+  transit_time?: string;
+  serviceName?: string;
+  service?: string;
+}
+
 // Country codes and detection
 const US_ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 const INTL_INDICATORS = ['china', 'shanghai', 'beijing', 'uk', 'london', 'germany', 'france', 'japan', 'tokyo', 'canada', 'mexico', 'india', 'australia', 'brazil', 'spain', 'italy', 'netherlands', 'korea', 'vietnam', 'thailand', 'singapore', 'hong kong', 'taiwan'];
@@ -28,16 +60,10 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   const parcels: Parcel[] = [];
   
   // Parse multiple boxes with various formats
-  // Format: "50x50x50 50lb" or "24x10x10 box weighing 20lbs"
-  const boxPatterns = [
-    // Pattern: dimensions weight (e.g., "50x50x50 50lb")
-    /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|cm|")?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi,
-    // Pattern: dimensions then separate weight
-    /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/gi
-  ];
+  const boxPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(?:in|inch|inches|cm|")?\s*(?:,|\s)*(?:weighing\s+)?(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
+  const dimOnlyPattern = /(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/gi;
 
-  // Try first pattern (dimensions + weight together)
-  let matches = [...input.matchAll(boxPatterns[0])];
+  let matches = [...input.matchAll(boxPattern)];
   
   if (matches.length > 0) {
     for (const match of matches) {
@@ -49,13 +75,13 @@ function parseNaturalLanguage(input: string): ParsedRequest {
       });
     }
   } else {
-    // Try to find dimensions and weights separately
-    const dimMatches = [...input.matchAll(boxPatterns[1])];
-    const weightMatches = [...input.matchAll(/(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi)];
+    const dimMatches = [...input.matchAll(dimOnlyPattern)];
+    const weightPattern = /(\d+(?:\.\d+)?)\s*(?:lb|lbs|pound|pounds|kg|kgs)/gi;
+    const weightMatches = [...input.matchAll(weightPattern)];
     
     for (let i = 0; i < dimMatches.length; i++) {
       const dim = dimMatches[i];
-      const weight = weightMatches[i] ? parseFloat(weightMatches[i][1]) : 10; // default weight
+      const weight = weightMatches[i] ? parseFloat(weightMatches[i][1]) : 10;
       parcels.push({
         length: parseFloat(dim[1]),
         width: parseFloat(dim[2]),
@@ -72,7 +98,6 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   let origin = '';
   let destination = '';
   
-  // Also look for zip codes
   const zipCodes = input.match(/\b\d{5}(-\d{4})?\b/g) || [];
   
   if (fromMatch) {
@@ -87,28 +112,20 @@ function parseNaturalLanguage(input: string): ParsedRequest {
     destination = zipCodes[1];
   }
 
-  // Detect countries
   const originCountry = detectCountry(origin);
   const destCountry = detectCountry(destination);
   
-  // Determine if international
   const isInternational = originCountry !== destCountry || 
     INTL_INDICATORS.some(ind => text.includes(ind));
 
-  // Detect pallet
   const isPallet = /pallet|freight|lcl|fcl|container/i.test(text);
 
-  // Determine routing logic
   const totalWeight = parcels.reduce((sum, p) => sum + p.weight, 0);
   const totalVolume = parcels.reduce((sum, p) => sum + (p.length * p.width * p.height), 0);
   const multipleBoxes = parcels.length > 1;
-  const heavyShipment = totalWeight > 150; // Over 150 lbs
-  const largeVolume = totalVolume > 50000; // Large cubic inches
+  const heavyShipment = totalWeight > 150;
+  const largeVolume = totalVolume > 50000;
   
-  // Needs both quotes in ambiguous cases:
-  // - Multiple boxes (even domestic)
-  // - International small parcels
-  // - Heavy/large domestic shipments
   const needsBothQuotes = multipleBoxes || 
     (isInternational && !isPallet) || 
     heavyShipment || 
@@ -129,14 +146,12 @@ function parseNaturalLanguage(input: string): ParsedRequest {
 function detectCountry(location: string): string {
   const loc = location.toLowerCase();
   
-  // US indicators
   if (US_ZIP_REGEX.test(location) || 
       /\b(usa|us|united states|america)\b/i.test(loc) ||
       /\b(miami|los angeles|new york|chicago|houston|phoenix|philadelphia|san antonio|san diego|dallas|san jose|austin|jacksonville|fort worth|columbus|charlotte|seattle|denver|boston|detroit|nashville|portland|las vegas|memphis|louisville|baltimore|milwaukee|albuquerque|tucson|fresno|sacramento|atlanta|kansas city|colorado springs|omaha|raleigh|virginia beach|oakland|minneapolis|tulsa|wichita|cleveland|tampa|orlando)\b/i.test(loc)) {
     return 'US';
   }
   
-  // Other countries
   if (/china|shanghai|beijing|shenzhen|guangzhou/i.test(loc)) return 'CN';
   if (/uk|united kingdom|london|manchester|birmingham|england|britain/i.test(loc)) return 'GB';
   if (/germany|berlin|munich|frankfurt|hamburg/i.test(loc)) return 'DE';
@@ -147,10 +162,10 @@ function detectCountry(location: string): string {
   if (/india|mumbai|delhi|bangalore/i.test(loc)) return 'IN';
   if (/australia|sydney|melbourne|brisbane/i.test(loc)) return 'AU';
   
-  return 'US'; // Default to US
+  return 'US';
 }
 
-async function getShippoQuotes(parsed: ParsedRequest): Promise<any[]> {
+async function getShippoQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   const SHIPPO_API_KEY = process.env.SHIPPO_API_KEY;
   
   if (!SHIPPO_API_KEY) {
@@ -159,7 +174,6 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<any[]> {
   }
 
   try {
-    // Build address objects - use zip codes or city names
     const addressFrom = {
       name: 'Sender',
       street1: '123 Main St',
@@ -204,13 +218,13 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<any[]> {
     const data = await response.json();
     
     if (data.rates) {
-      return data.rates.map((rate: any) => ({
+      return data.rates.map((rate: ShippoRate) => ({
         provider: rate.provider,
         service: rate.servicelevel?.name || rate.servicelevel_name || 'Standard',
         price: parseFloat(rate.amount),
         currency: rate.currency,
         transitDays: rate.estimated_days ? `${rate.estimated_days} days` : rate.duration_terms
-      })).sort((a: any, b: any) => a.price - b.price);
+      })).sort((a: QuoteResult, b: QuoteResult) => a.price - b.price);
     }
     
     return [];
@@ -220,46 +234,38 @@ async function getShippoQuotes(parsed: ParsedRequest): Promise<any[]> {
   }
 }
 
-async function getFreightosQuotes(parsed: ParsedRequest): Promise<any[]> {
+async function getFreightosQuotes(parsed: ParsedRequest): Promise<QuoteResult[]> {
   try {
-    // Calculate total weight and volume for consolidated pallet quote
     const totalWeight = parsed.parcels.reduce((sum, p) => sum + p.weight, 0);
     const totalVolume = parsed.parcels.reduce((sum, p) => {
-      // Convert cubic inches to CBM (1 CBM = 61023.7 cubic inches)
       return sum + (p.length * p.width * p.height) / 61023.7;
     }, 0);
 
-    // Use Freightos public API
     const origin = encodeURIComponent(parsed.origin || '33142');
     const destination = encodeURIComponent(parsed.destination || '90210');
-    const weightKg = Math.ceil(totalWeight * 0.453592); // Convert lbs to kg
-    const volumeCbm = Math.max(0.01, totalVolume).toFixed(3);
-
-    // Calculate dimensions in cm (estimate from volume)
-    const dimCm = Math.ceil(Math.pow(totalVolume * 1000000, 1/3)); // cube root for equal dims
+    const weightKg = Math.ceil(totalWeight * 0.453592);
+    
+    const dimCm = Math.ceil(Math.pow(totalVolume * 1000000, 1/3));
     
     const url = `https://ship.freightos.com/api/shippingCalculator?estimate=true&origin=${origin}&destination=${destination}&weight=${weightKg}kg&width=${dimCm}cm&length=${dimCm}cm&height=${dimCm}cm&quantity=1&format=json&resultSet=all`;
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      }
+      headers: { 'Accept': 'application/json' }
     });
 
     const data = await response.json();
     
-    const quotes: any[] = [];
+    const quotes: QuoteResult[] = [];
     
     if (data.rates || data.results) {
-      const rates = data.rates || data.results || [];
+      const rates: FreightosRate[] = data.rates || data.results || [];
       
-      // Find cheapest air and cheapest ocean
-      const airRates = rates.filter((r: any) => r.mode === 'air' || r.transportMode === 'AIR');
-      const oceanRates = rates.filter((r: any) => r.mode === 'sea' || r.mode === 'ocean' || r.transportMode === 'SEA' || r.transportMode === 'LCL' || r.transportMode === 'FCL');
+      const airRates = rates.filter((r) => r.mode === 'air' || r.transportMode === 'AIR');
+      const oceanRates = rates.filter((r) => r.mode === 'sea' || r.mode === 'ocean' || r.transportMode === 'SEA' || r.transportMode === 'LCL' || r.transportMode === 'FCL');
       
       if (airRates.length > 0) {
-        const cheapestAir = airRates.reduce((min: any, r: any) => {
+        const cheapestAir = airRates.reduce((min, r) => {
           const price = r.price || r.totalPrice || r.amount || 0;
           const minPrice = min.price || min.totalPrice || min.amount || Infinity;
           return price < minPrice ? r : min;
@@ -276,7 +282,7 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<any[]> {
       }
       
       if (oceanRates.length > 0) {
-        const cheapestOcean = oceanRates.reduce((min: any, r: any) => {
+        const cheapestOcean = oceanRates.reduce((min, r) => {
           const price = r.price || r.totalPrice || r.amount || 0;
           const minPrice = min.price || min.totalPrice || min.amount || Infinity;
           return price < minPrice ? r : min;
@@ -292,9 +298,8 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<any[]> {
         });
       }
       
-      // If no categorized rates, return all sorted by price
       if (quotes.length === 0 && rates.length > 0) {
-        return rates.slice(0, 5).map((r: any) => ({
+        return rates.slice(0, 5).map((r) => ({
           provider: 'Freightos',
           service: r.serviceName || r.service || 'Freight',
           price: r.price || r.totalPrice || r.amount || 0,
@@ -305,11 +310,9 @@ async function getFreightosQuotes(parsed: ParsedRequest): Promise<any[]> {
       }
     }
     
-    // Return estimate if no live rates
     if (quotes.length === 0) {
-      // Calculate rough estimates based on weight/distance
-      const baseAirRate = 3.5; // $/kg estimate
-      const baseOceanRate = 0.8; // $/kg estimate
+      const baseAirRate = 3.5;
+      const baseOceanRate = 0.8;
       
       quotes.push({
         provider: 'Freightos',
@@ -342,7 +345,7 @@ async function saveToDatabase(
   parsed: ParsedRequest, 
   email?: string, 
   phone?: string,
-  quotes?: any
+  quotes?: { shippo?: QuoteResult[]; freightos?: QuoteResult[] }
 ) {
   const DATABASE_URL = process.env.DATABASE_URL;
   
@@ -356,27 +359,13 @@ async function saveToDatabase(
     
     await sql`
       INSERT INTO quote_requests (
-        raw_request, 
-        origin, 
-        destination, 
-        parcels, 
-        is_international, 
-        is_pallet,
-        email,
-        phone,
-        quotes,
-        created_at
+        raw_request, origin, destination, parcels, 
+        is_international, is_pallet, email, phone, quotes, created_at
       ) VALUES (
-        ${request},
-        ${parsed.origin},
-        ${parsed.destination},
-        ${JSON.stringify(parsed.parcels)},
-        ${parsed.isInternational},
-        ${parsed.isPallet},
-        ${email || null},
-        ${phone || null},
-        ${JSON.stringify(quotes) || null},
-        NOW()
+        ${request}, ${parsed.origin}, ${parsed.destination},
+        ${JSON.stringify(parsed.parcels)}, ${parsed.isInternational},
+        ${parsed.isPallet}, ${email || null}, ${phone || null},
+        ${JSON.stringify(quotes) || null}, NOW()
       )
     `;
   } catch (error) {
@@ -395,24 +384,16 @@ export async function POST(req: NextRequest) {
         error: 'Please provide a shipping request',
         quotes: [],
         routing: 'error',
-        parsed: { parcels: [], origin: '', destination: '', isInternational: false, isPallet: false, needsBothQuotes: false }
+        parsed: { parcels: [], origin: '', destination: '', originCountry: 'US', destCountry: 'US', isInternational: false, isPallet: false, needsBothQuotes: false }
       }, { status: 400 });
     }
 
-    // Parse the natural language request
     const parsed = parseNaturalLanguage(request);
 
-    // Check for missing info
     const missingInfo: string[] = [];
-    if (parsed.parcels.length === 0) {
-      missingInfo.push('dimensions');
-    }
-    if (!parsed.origin) {
-      missingInfo.push('origin');
-    }
-    if (!parsed.destination) {
-      missingInfo.push('destination');
-    }
+    if (parsed.parcels.length === 0) missingInfo.push('dimensions');
+    if (!parsed.origin) missingInfo.push('origin');
+    if (!parsed.destination) missingInfo.push('destination');
 
     if (missingInfo.length > 0) {
       return NextResponse.json({
@@ -425,21 +406,17 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Determine routing strategy
     let routing = '';
-    let shippoQuotes: any[] = [];
-    let freightosQuotes: any[] = [];
+    let shippoQuotes: QuoteResult[] = [];
+    let freightosQuotes: QuoteResult[] = [];
 
     if (parsed.isPallet || (parsed.isInternational && !parsed.needsBothQuotes)) {
-      // Clear Freightos case: pallets or international freight
       routing = 'Freightos Only (Freight)';
       freightosQuotes = await getFreightosQuotes(parsed);
     } else if (!parsed.isInternational && parsed.parcels.length === 1 && parsed.parcels[0].weight < 70) {
-      // Clear Shippo case: single small domestic parcel
       routing = 'Shippo Only (Domestic Parcel)';
       shippoQuotes = await getShippoQuotes(parsed);
     } else {
-      // Ambiguous case: query both
       routing = 'Both (Comparison)';
       [shippoQuotes, freightosQuotes] = await Promise.all([
         getShippoQuotes(parsed),
@@ -449,7 +426,6 @@ export async function POST(req: NextRequest) {
 
     const allQuotes = [...shippoQuotes, ...freightosQuotes];
 
-    // Save to database
     await saveToDatabase(request, parsed, email, phone, { shippo: shippoQuotes, freightos: freightosQuotes });
 
     return NextResponse.json({
@@ -468,7 +444,7 @@ export async function POST(req: NextRequest) {
       error: 'Failed to process quote request',
       quotes: [],
       routing: 'error',
-      parsed: { parcels: [], origin: '', destination: '', isInternational: false, isPallet: false, needsBothQuotes: false }
+      parsed: { parcels: [], origin: '', destination: '', originCountry: 'US', destCountry: 'US', isInternational: false, isPallet: false, needsBothQuotes: false }
     }, { status: 500 });
   }
 }
