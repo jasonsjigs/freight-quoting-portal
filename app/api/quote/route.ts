@@ -362,8 +362,8 @@ function parseNaturalLanguage(input: string): ParsedRequest {
   }
 
   // Parse origin and destination
-  const fromMatch = text.match(/from\s+([\w\s,]+?)(?:\s+to\s+|$)/i);
-  const toMatch = text.match(/to\s+([\w\s,]+?)(?:\s+from|$|\.|\n)/i);
+  const fromMatch = input.match(/from\s+([\w\s,]+?)(?:\s+to\s+|$)/i);
+  const toMatch = input.match(/to\s+([\w\s,]+?)(?:\s+from|$|\.|\n)/i);
   
   let origin = '';
   let destination = '';
@@ -380,6 +380,14 @@ function parseNaturalLanguage(input: string): ParsedRequest {
     destination = toMatch[1].trim();
   } else if (zipCodes.length >= 2) {
     destination = zipCodes[1] || '';
+  }
+
+  if ((!origin || !destination) && !/\d/.test(input)) {
+    const simpleRoute = input.match(/^\s*([A-Za-z][\w\s,.-]+?)\s+to\s+([A-Za-z][\w\s,.-]+?)\s*$/i);
+    if (simpleRoute) {
+      if (!origin) origin = simpleRoute[1].trim();
+      if (!destination) destination = simpleRoute[2].trim();
+    }
   }
 
   const originCountry = detectCountry(origin);
@@ -431,6 +439,7 @@ function detectCountry(location: string): string {
   if (/mexico|mexico city|guadalajara|cancun/i.test(loc)) return 'MX';
   if (/india|mumbai|delhi|bangalore/i.test(loc)) return 'IN';
   if (/australia|sydney|melbourne|brisbane/i.test(loc)) return 'AU';
+  if (/brazil|rio de janeiro|sao paulo/i.test(loc)) return 'BR';
   
   return 'US';
 }
